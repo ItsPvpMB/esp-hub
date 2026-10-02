@@ -58,6 +58,7 @@ local Settings = {
     TextColor = Color3.fromRGB(255, 255, 255),
 }
 getgenv().ESPSettings = Settings -- ให้เรียกดู/แก้ค่าจากภายนอกได้
+getgenv().ESP_HUB_INSTANCE = game.PlaceId .. "@" .. game.JobId -- ใช้เช็คว่า instance นี้รันอยู่ในเซิร์ฟปัจจุบันจริงไหม (กัน state เก่าหลอก)
 local Running = true -- false เมื่อปิดสคริปต์ด้วยปุ่ม End / Unload
 
 --------------------------------------------------------------------
@@ -353,6 +354,7 @@ local Rayfield, Window, EspTab
 local function unload()
     Running = false
     getgenv().ESPSettings = nil
+    getgenv().ESP_HUB_INSTANCE = nil
     for _, set in pairs(Drawings) do
         for _, d in pairs(set) do
             pcall(function() d:Remove() end)
@@ -433,5 +435,5 @@ end)
 if not menuOk then
     warn("[ESP] โหลดเมนู Rayfield ไม่สำเร็จ: " .. tostring(menuErr) .. " — ESP ยังทำงานด้วยค่าเริ่มต้น")
 else
-    print("[ESP] ESP Hub v1.1 พร้อมใช้งาน — RCtrl = เปิด/ปิด ESP, End = ปิดสคริปต์ทั้งหมด")
+    print("[ESP] ESP Hub v1.2 พร้อมใช้งาน — RCtrl = เปิด/ปิด ESP, End = ปิดสคริปต์ทั้งหมด")
 end
