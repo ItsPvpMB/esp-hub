@@ -26,6 +26,11 @@ local STATE = STATE or {
     alive = function() return true end,
 }
 
+-- เคลียร์รอบก่อนหน้าเสมอ ก่อนเริ่มรอบใหม่ (กันรันซ้ำแล้วกรอบ/เมนูเก่าซ้อน)
+if type(getgenv().ESP_HUB_UNLOAD) == "function" then
+    pcall(getgenv().ESP_HUB_UNLOAD)
+end
+
 -- เปลี่ยนเซิร์ฟเวอร์/เทเลพอร์ตแล้วรันซ้ำอัตโนมัติ
 pcall(function()
     if REQUEUE_URL ~= "" then
@@ -333,6 +338,7 @@ local function showToast(text, color)
 end
 
 local function toggleEsp()
+    if not Running then return end
     Settings.Enabled = not Settings.Enabled
     local on = Settings.Enabled
     print("[ESP] " .. (on and "เปิด" or "ปิด"))
@@ -379,11 +385,12 @@ local function unload()
     if Rayfield then pcall(function() Rayfield:Destroy() end) end
 end
 
+getgenv().ESP_HUB_UNLOAD = unload -- รอบถัดไปจะเรียกตัวนี้เพื่อเคลียร์ของเก่าก่อนเริ่มใหม่
 STATE.onCleanup(unload)
 
 -- ปุ่มลัด: RCtrl = สลับเปิด/ปิด ESP, End = ปิดสคริปต์ทั้งหมด (ทำงานแม้เมนูถูกย่อ)
 STATE.connect(UserInputService.InputBegan, function(input, gameProcessed)
-    if gameProcessed then return end
+    if gameProcessed or not Running then return end
     if input.KeyCode == Enum.KeyCode.RightControl then
         toggleEsp()
     elseif input.KeyCode == Enum.KeyCode.End then
@@ -426,5 +433,5 @@ end)
 if not menuOk then
     warn("[ESP] โหลดเมนู Rayfield ไม่สำเร็จ: " .. tostring(menuErr) .. " — ESP ยังทำงานด้วยค่าเริ่มต้น")
 else
-    print("[ESP] พร้อมใช้งาน — RCtrl = เปิด/ปิด ESP, End = ปิดสคริปต์ทั้งหมด")
+    print("[ESP] ESP Hub v1.1 พร้อมใช้งาน — RCtrl = เปิด/ปิด ESP, End = ปิดสคริปต์ทั้งหมด")
 end
