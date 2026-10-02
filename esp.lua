@@ -409,11 +409,28 @@ end)
 --------------------------------------------------------------------
 -- เมนู Rayfield Gen2 (ลองโหลดเองถึง 10 ครั้ง กันเน็ตพลาดช่วงย้ายเซิร์ฟ)
 --------------------------------------------------------------------
+-- โหลด Rayfield: ใช้แคชในเครื่องถ้ามี (โหลดไว ไม่ต้องยิงเน็ตทุกครั้งที่ย้ายเซิร์ฟ)
+local function getRayfieldSource()
+    if readfile and (isfile == nil or (type(isfile) == "function" and isfile("esp-rayfield-cache.luau"))) then
+        local ok, src = pcall(readfile, "esp-rayfield-cache.luau")
+        if ok and type(src) == "string" and #src > 1000 then
+            return src
+        end
+    end
+    local ok, src = pcall(function() return game:HttpGet("https://sirius.menu/gen2") end)
+    if ok and type(src) == "string" and #src > 1000 then
+        pcall(function() if writefile then writefile("esp-rayfield-cache.luau", src) end end)
+        return src
+    end
+    return nil
+end
+
 task.spawn(function()
-    for attempt = 1, 10 do
+    for attempt = 1, 15 do
         if not Running then return end
+        local src = getRayfieldSource()
         local menuOk, menuErr = pcall(function()
-    Rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
+    Rayfield = src and loadstring(src)()
     Window = Rayfield:CreateWindow({
         name = "ESP Hub",
         subtitle = "Universal ESP",
@@ -440,7 +457,7 @@ task.spawn(function()
     EspTab:CreateButton({ name = "ถอนสคริปต์ (Unload)", callback = unload })
         end)
         if menuOk then
-            print("[ESP] ESP Hub v1.4 พร้อมใช้งาน — RCtrl = เปิด/ปิด ESP, End = ปิดสคริปต์ทั้งหมด")
+            print("[ESP] ESP Hub v1.5 พร้อมใช้งาน — RCtrl = เปิด/ปิด ESP, End = ปิดสคริปต์ทั้งหมด")
             return
         end
         if attempt < 10 then
