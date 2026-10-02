@@ -65,10 +65,47 @@ getgenv().ESP_HUB_INSTANCE = game.PlaceId .. "@" .. game.JobId -- ใช้เ�
 pcall(function() workspace:SetAttribute("ESP_HUB_INSTANCE", game.JobId) end) -- ตรวจสถานะจริง: attribute นี้ตายพร้อม DataModel จึงไม่หลอกเหมือน getgenv
 local Running = true -- false เมื่อปิดสคริปต์ด้วยปุ่ม End / Unload
 
+-- ====== ตั้งค่า Combat ======
+local Combat = {
+    Aimbot = false,
+    AimFov = 150,   -- รัศมีจับเป้าบนจอ (พิกเซล)
+    AimSpeed = 8,   -- ความเร็วล็อกเป้า (2-20)
+    TriggerBot = false,
+    Hitbox = false,
+    HitboxSize = 8,
+    NoRecoil = false,
+}
+getgenv().ESPCombat = Combat
+
+-- No Recoil: ทำให้ฟังก์ชัน Recoil/RecoilLimit ของ CameraController ของเกม (ฝั่ง client) ไม่ทำงาน
+local recoilSaved = nil
+local function setNoRecoil(on)
+    local ok, cc = pcall(function() return require(game:GetService("ReplicatedStorage").Client.CameraController) end)
+    if not ok or type(cc) ~= "table" then return false end
+    if on then
+        if not recoilSaved then
+            recoilSaved = { recoil = cc.Recoil, limit = cc.RecoilLimit }
+        end
+        pcall(function()
+            cc.Recoil = function() end
+            cc.RecoilLimit = function() end
+        end)
+        pcall(function() if cc.ResetRecoil then cc.ResetRecoil() end end)
+    elseif recoilSaved then
+        pcall(function()
+            cc.Recoil = recoilSaved.recoil
+            cc.RecoilLimit = recoilSaved.limit
+        end)
+        recoilSaved = nil
+    end
+    return true
+end
+
 --------------------------------------------------------------------
 -- Drawing objects (ต่อเป้าหมาย 1 ชุด)
 --------------------------------------------------------------------
 local Drawings = {}
+local expandedSizes = {} -- [rootPart] = { size, collide } สำหรับคืนค่า hitbox เดิม
 
 local function newObj(class, props)
     local d = Drawing.new(class)
@@ -103,6 +140,30 @@ end
 local function hideSet(set)
     for _, d in pairs(set) do
         d.Visible = false
+    end
+end
+
+-- ขยาย/คืนค่า hitbox ของเป้าหมาย (ทำงานฝั่ง client)
+local function applyHitbox(root)
+    if Combat.Hitbox then
+        if not expandedSizes[root] then
+            expandedSizes[root] = { size = root.Size, collide = root.CanCollide }
+        end
+        local target = Vector3.new(Combat.HitboxSize, Combat.HitboxSize, Combat.HitboxSize)
+        if root.Size ~= target then
+            pcall(function()
+                root.Size = target
+                root.CanCollide = false
+                root.Massless = true
+            end)
+        end
+    elseif expandedSizes[root] then
+        local saved = expandedSizes[root]
+        pcall(function()
+            root.Size = saved.size
+            root.CanCollide = saved.collide
+        end)
+        expandedSizes[root] = nil
     end
 end
 
@@ -150,6 +211,8 @@ local function update()
         if not root or not root:IsA("BasePart") then hideSet(set) continue end
         -- ไม่ซ่อนกรอบตอนตาย: บางเกมค้าง Health = 0 หลังเกิดใหม่ ทำให้กรอบหายถาวร
         if isPlayer and Settings.TeamCheck and obj.Team ~= nil and obj.Team == LocalPlayer.Team then hideSet(set) continue end
+
+        applyHitbox(root)
 
         local distance = (root.Position - camPos).Magnitude
         if distance > Settings.MaxDistance then hideSet(set) continue end
@@ -351,6 +414,100 @@ local function toggleEsp()
 end
 
 --------------------------------------------------------------------
+-- Combat: Aimbot + Trigger Bot (ทำงานหลังกล้องเกมอัปเดตทุกเฟรม)
+--------------------------------------------------------------------
+local fovCircle = Drawing.new("Circle")
+fovCircle.Thickness = 1
+fovCircle.Filled = false
+fovCircle.Transparency = 0.8
+fovCircle.Color = Color3.fromRGB(255, 255, 255)
+fovCircle.Visible = false
+
+local triggerHeld = false
+
+local function aimStep(dt)
+    if not Running then return end
+    local camera = workspace.CurrentCamera
+    if not camera then return end
+
+    local mouseLoc = UserInputService:GetMouseLocation()
+
+    if Combat.Aimbot then
+        fovCircle.Position = Vector2.new(mouseLoc.X, mouseLoc.Y)
+        fovCircle.Radius = Combat.AimFov
+        fovCircle.Visible = true
+    else
+        fovCircle.Visible = false
+    end
+
+    -- Aimbot: กดคลิกขวาค้าง = ล็อกไปที่ศัตรูใกล้เมาส์ที่สุดในรัศมี
+    if Combat.Aimbot and UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2) then
+        local bestPart, bestDist
+        for obj in pairs(Drawings) do
+            local character = obj:IsA("Player") and obj.Character or obj
+            if character and character.Parent then
+                local part = character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart
+                if part and part:IsA("BasePart") then
+                    local pt = camera:WorldToViewportPoint(part.Position)
+                    if pt.Z > 0 then
+                        local d = (Vector2.new(pt.X, pt.Y) - Vector2.new(mouseLoc.X, mouseLoc.Y)).Magnitude
+                        if d <= Combat.AimFov and (not bestDist or d < bestDist) then
+                            bestPart, bestDist = part, d
+                        end
+                    end
+                end
+            end
+        end
+        if bestPart then
+            local targetCf = CFrame.lookAt(camera.CFrame.Position, bestPart.Position)
+            local alpha = math.clamp(Combat.AimSpeed * dt, 0, 1)
+            camera.CFrame = camera.CFrame:Lerp(targetCf, alpha)
+        end
+    end
+
+    -- Trigger Bot: เล็งโดนเป้าที่ติดตามอยู่ = กดยิงให้เอง
+    if Combat.TriggerBot then
+        local unitRay = camera:ViewportPointToRay(mouseLoc.X, mouseLoc.Y)
+        rayParams.FilterDescendantsInstances = { LocalPlayer.Character, camera }
+        local hit = workspace:Raycast(unitRay.Origin, unitRay.Direction * 2000, rayParams)
+        local onEnemy = false
+        if hit then
+            local model = hit.Instance:FindFirstAncestorOfClass("Model")
+            local key = model
+            local hops = 0
+            while key and hops < 3 do
+                local plr = Players:GetPlayerFromCharacter(key)
+                if plr then
+                    key = plr
+                    break
+                end
+                if Drawings[key] then break end
+                key = key:FindFirstAncestorOfClass("Model")
+                hops += 1
+            end
+            if key and Drawings[key] then
+                local plr = Players:GetPlayerFromCharacter(key)
+                onEnemy = not (plr and Settings.TeamCheck and plr.Team ~= nil and plr.Team == LocalPlayer.Team)
+            end
+        end
+        if onEnemy and not triggerHeld then
+            triggerHeld = true
+            pcall(mouse1press)
+        elseif not onEnemy and triggerHeld then
+            triggerHeld = false
+            pcall(mouse1release)
+        end
+    elseif triggerHeld then
+        triggerHeld = false
+        pcall(mouse1release)
+    end
+end
+
+pcall(function()
+    RunService:BindToRenderStep("ESP_HUB_COMBAT", Enum.RenderPriority.Camera.Value + 1, aimStep)
+end)
+
+--------------------------------------------------------------------
 -- ถอนสคริปต์
 --------------------------------------------------------------------
 local Rayfield, Window, EspTab
@@ -367,6 +524,10 @@ local function unload()
     end
     table.clear(Drawings)
     pcall(function() toast:Remove() end)
+    pcall(function() RunService:UnbindFromRenderStep("ESP_HUB_COMBAT") end)
+    pcall(function() fovCircle:Remove() end)
+    pcall(function() if triggerHeld then mouse1release() end end)
+    pcall(function() setNoRecoil(false) end)
     -- Rayfield Gen2 แปะ ScreenGui ชื่อ UUID ไว้ใน gethui() และ :Destroy ของมันลบไม่หายจริง
     -- จึงต้องกวาดลบด้วยรูปแบบชื่อ ไม่งั้นหน้าต่างเก่าจะซ้อนทับทุกครั้งที่รันซ้ำ
     pcall(function()
@@ -455,9 +616,22 @@ task.spawn(function()
     EspTab:CreateColorPicker({ name = "สีศัตรู", flag = "EspEnemyColor", forgetState = true, color = Settings.EnemyColor, callback = function(c) Settings.EnemyColor = c end })
     EspTab:CreateColorPicker({ name = "สีเพื่อน (ทีมเดียวกัน)", flag = "EspAllyColor", forgetState = true, color = Settings.AllyColor, callback = function(c) Settings.AllyColor = c end })
     EspTab:CreateButton({ name = "ถอนสคริปต์ (Unload)", callback = unload })
+
+    local CombatTab = Window:CreateTab({ name = "Combat" })
+    CombatTab:CreateToggle({ name = "Aimbot (กดคลิกขวาค้างเพื่อล็อก)", flag = "CmbAim", forgetState = true, value = Combat.Aimbot, callback = function(v) Combat.Aimbot = v end })
+    CombatTab:CreateSlider({ name = "รัศมีการล็อก", flag = "CmbFov", forgetState = true, range = { 50, 500 }, increment = 10, value = Combat.AimFov, suffix = " px", callback = function(v) Combat.AimFov = v end })
+    CombatTab:CreateSlider({ name = "ความเร็วล็อก", flag = "CmbSpeed", forgetState = true, range = { 2, 20 }, increment = 1, value = Combat.AimSpeed, callback = function(v) Combat.AimSpeed = v end })
+    CombatTab:CreateToggle({ name = "Trigger Bot (ยิงอัตโนมัติเมื่อเล็งโดน)", flag = "CmbTrigger", forgetState = true, value = Combat.TriggerBot, callback = function(v) Combat.TriggerBot = v end })
+    CombatTab:CreateToggle({ name = "ขยาย Hitbox", flag = "CmbHitbox", forgetState = true, value = Combat.Hitbox, callback = function(v) Combat.Hitbox = v end })
+    CombatTab:CreateSlider({ name = "ขนาด Hitbox", flag = "CmbHitboxSize", forgetState = true, range = { 4, 20 }, increment = 1, value = Combat.HitboxSize, suffix = " studs", callback = function(v) Combat.HitboxSize = v end })
+    CombatTab:CreateToggle({ name = "No Recoil (ลบแรงเบี่ยงกล้อง)", flag = "CmbNoRecoil", forgetState = true, value = Combat.NoRecoil, callback = function(v)
+        Combat.NoRecoil = v
+        local done = setNoRecoil(v)
+        if v and not done then warn("[ESP] ไม่พบ CameraController ของเกมนี้ — No Recoil ใช้ไม่ได้") end
+    end })
         end)
         if menuOk then
-            print("[ESP] ESP Hub v1.5 พร้อมใช้งาน — RCtrl = เปิด/ปิด ESP, End = ปิดสคริปต์ทั้งหมด")
+            print("[ESP] ESP Hub v1.6 พร้อมใช้งาน — RCtrl = เปิด/ปิด ESP, End = ปิดสคริปต์ทั้งหมด")
             return
         end
         if attempt < 10 then
