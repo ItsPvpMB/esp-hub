@@ -36,7 +36,7 @@ end
 pcall(function()
     local source
     if REQUEUE_URL ~= "" then
-        source = 'task.spawn(function() for i = 1, 6 do local ok, f = pcall(function() return loadstring(game:HttpGet("' .. REQUEUE_URL .. '")) end) if ok and f then f() return end task.wait(3) end end)'
+        source = 'task.spawn(function() for i = 1, 20 do local ok, f = pcall(function() return loadstring(game:HttpGet("' .. REQUEUE_URL .. '")) end) if ok and f then f() return end task.wait(5) end end)'
     elseif readfile then
         source = readfile("esp-rayfield.luau")
     end
@@ -62,6 +62,7 @@ local Settings = {
 }
 getgenv().ESPSettings = Settings -- ให้เรียกดู/แก้ค่าจากภายนอกได้
 getgenv().ESP_HUB_INSTANCE = game.PlaceId .. "@" .. game.JobId -- ใช้เช็คว่า instance นี้รันอยู่ในเซิร์ฟปัจจุบันจริงไหม (กัน state เก่าหลอก)
+pcall(function() workspace:SetAttribute("ESP_HUB_INSTANCE", game.JobId) end) -- ตรวจสถานะจริง: attribute นี้ตายพร้อม DataModel จึงไม่หลอกเหมือน getgenv
 local Running = true -- false เมื่อปิดสคริปต์ด้วยปุ่ม End / Unload
 
 --------------------------------------------------------------------
@@ -358,6 +359,7 @@ local function unload()
     Running = false
     getgenv().ESPSettings = nil
     getgenv().ESP_HUB_INSTANCE = nil
+    pcall(function() workspace:SetAttribute("ESP_HUB_INSTANCE", nil) end)
     for _, set in pairs(Drawings) do
         for _, d in pairs(set) do
             pcall(function() d:Remove() end)
@@ -405,9 +407,12 @@ STATE.connect(UserInputService.InputBegan, function(input, gameProcessed)
 end)
 
 --------------------------------------------------------------------
--- เมนู Rayfield Gen2
+-- เมนู Rayfield Gen2 (ลองโหลดเองถึง 10 ครั้ง กันเน็ตพลาดช่วงย้ายเซิร์ฟ)
 --------------------------------------------------------------------
-local menuOk, menuErr = pcall(function()
+task.spawn(function()
+    for attempt = 1, 10 do
+        if not Running then return end
+        local menuOk, menuErr = pcall(function()
     Rayfield = loadstring(game:HttpGet("https://sirius.menu/gen2"))()
     Window = Rayfield:CreateWindow({
         name = "ESP Hub",
@@ -433,10 +438,15 @@ local menuOk, menuErr = pcall(function()
     EspTab:CreateColorPicker({ name = "สีศัตรู", flag = "EspEnemyColor", forgetState = true, color = Settings.EnemyColor, callback = function(c) Settings.EnemyColor = c end })
     EspTab:CreateColorPicker({ name = "สีเพื่อน (ทีมเดียวกัน)", flag = "EspAllyColor", forgetState = true, color = Settings.AllyColor, callback = function(c) Settings.AllyColor = c end })
     EspTab:CreateButton({ name = "ถอนสคริปต์ (Unload)", callback = unload })
+        end)
+        if menuOk then
+            print("[ESP] ESP Hub v1.4 พร้อมใช้งาน — RCtrl = เปิด/ปิด ESP, End = ปิดสคริปต์ทั้งหมด")
+            return
+        end
+        if attempt < 10 then
+            warn("[ESP] โหลดเมนูไม่สำเร็จ (ครั้งที่ " .. attempt .. "/10) ลองใหม่ใน 5 วิ")
+            task.wait(5)
+        end
+    end
+    warn("[ESP] โหลดเมนู Rayfield ไม่สำเร็จหลังลอง 10 ครั้ง — ESP ยังวาดด้วยค่าเริ่มต้น, ปุ่ม RCtrl/End ใช้ได้อยู่")
 end)
-
-if not menuOk then
-    warn("[ESP] โหลดเมนู Rayfield ไม่สำเร็จ: " .. tostring(menuErr) .. " — ESP ยังทำงานด้วยค่าเริ่มต้น")
-else
-    print("[ESP] ESP Hub v1.3 พร้อมใช้งาน — RCtrl = เปิด/ปิด ESP, End = ปิดสคริปต์ทั้งหมด")
-end
