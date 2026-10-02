@@ -32,12 +32,15 @@ if type(getgenv().ESP_HUB_UNLOAD) == "function" then
 end
 
 -- เปลี่ยนเซิร์ฟเวอร์/เทเลพอร์ตแล้วรันซ้ำอัตโนมัติ
+-- bootstrap จะลองดึงสคริปต์ซ้ำถึง 6 ครั้ง (เว้น 3 วิ) กัน HttpGet พลาดช่วงย้ายเซิร์ฟ
 pcall(function()
+    local source
     if REQUEUE_URL ~= "" then
-        queue_on_teleport('loadstring(game:HttpGet("' .. REQUEUE_URL .. '"))()')
+        source = 'task.spawn(function() for i = 1, 6 do local ok, f = pcall(function() return loadstring(game:HttpGet("' .. REQUEUE_URL .. '")) end) if ok and f then f() return end task.wait(3) end end)'
     elseif readfile then
-        queue_on_teleport(readfile("esp-rayfield.luau"))
+        source = readfile("esp-rayfield.luau")
     end
+    if source then queue_on_teleport(source) end
 end)
 
 local Settings = {
@@ -435,5 +438,5 @@ end)
 if not menuOk then
     warn("[ESP] โหลดเมนู Rayfield ไม่สำเร็จ: " .. tostring(menuErr) .. " — ESP ยังทำงานด้วยค่าเริ่มต้น")
 else
-    print("[ESP] ESP Hub v1.2 พร้อมใช้งาน — RCtrl = เปิด/ปิด ESP, End = ปิดสคริปต์ทั้งหมด")
+    print("[ESP] ESP Hub v1.3 พร้อมใช้งาน — RCtrl = เปิด/ปิด ESP, End = ปิดสคริปต์ทั้งหมด")
 end
